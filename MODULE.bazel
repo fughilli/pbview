@@ -1,0 +1,25 @@
+module(name = "pbview", version = "0.1.0")
+
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_rust", version = "0.71.3")
+bazel_dep(name = "rules_cc", version = "0.2.22")
+bazel_dep(name = "toolchains_protoc", version = "0.6.1")
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(edition = "2021")
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")
+
+protoc = use_extension("@toolchains_protoc//protoc:extensions.bzl", "protoc")
+protoc.toolchain(
+    google_protobuf = "com_google_protobuf",
+    version = "v29.3",
+)
+use_repo(
+    protoc,
+    protoc_linux_aarch64 = "toolchains_protoc_hub.linux_aarch_64",
+    protoc_linux_x86_64 = "toolchains_protoc_hub.linux_x86_64",
+    protoc_osx_aarch64 = "toolchains_protoc_hub.osx_aarch_64",
+    protoc_osx_x86_64 = "toolchains_protoc_hub.osx_x86_64",
+)
