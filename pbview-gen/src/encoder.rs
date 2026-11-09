@@ -124,7 +124,9 @@ impl<'f> Gen<'f> {
         // One element, without its tag.
         let (elem, packable): (u64, bool) = if let Some((k, _, _)) = scalar(f.ty) {
             match (k, b.max_value) {
-                ("Uint32" | "Uint64", Some(v)) => (varint_len(v), true),
+                // A field that can only be 0 is never written (proto3 default).
+                ("Uint32" | "Uint64" | "Enum", Some(0)) if f.label != Label::Repeated && f.oneof_index.is_none() && !f.proto3_optional => return Some(0),
+                ("Uint32" | "Uint64" | "Enum", Some(v)) => (varint_len(v), true),
                 _ => (scalar_max(k), true),
             }
         } else if f.ty == TY_STRING || f.ty == TY_BYTES {
@@ -231,6 +233,7 @@ impl<'f> Gen<'f> {
                     };
                     let value_guard = match (k, b.max_value) {
                         ("Uint32" | "Uint64", Some(n)) => format!("        if v.iter().any(|&x| u64::from(x) > {n}) {{ return Err({rt}::EncodeError::TooLarge {{ field: {num}, max: {n} }}); }}\n"),
+                        ("Enum", Some(n)) => format!("        if v.iter().any(|&x| x < 0 || i64::from(x) > {n}) {{ return Err({rt}::EncodeError::TooLarge {{ field: {num}, max: {n} }}); }}\n"),
                         _ => String::new(),
                     };
                     let _ = writeln!(out, "{doc} Packed; once.\n    pub fn {}(&mut self, v: &[{ty}]) -> Result<&mut Self, {rt}::EncodeError> {{", ident(&name));
@@ -278,6 +281,7 @@ impl<'f> Gen<'f> {
                 };
                 let value_guard = match (k, b.max_value) {
                     ("Uint32" | "Uint64", Some(n)) => format!("        if u64::from(v) > {n} {{ return Err({rt}::EncodeError::TooLarge {{ field: {num}, max: {n} }}); }}\n"),
+                    ("Enum", Some(n)) => format!("        if v < 0 || i64::from(v) > {n} {{ return Err({rt}::EncodeError::TooLarge {{ field: {num}, max: {n} }}); }}\n"),
                     _ => String::new(),
                 };
                 let _ = writeln!(out, "{doc}\n    pub fn {}(&mut self, v: {ty}) -> Result<&mut Self, {rt}::EncodeError> {{", ident(&name));
