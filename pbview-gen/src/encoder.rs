@@ -123,7 +123,10 @@ impl<'f> Gen<'f> {
         let tag = tag_len(f.number);
         // One element, without its tag.
         let (elem, packable): (u64, bool) = if let Some((k, _, _)) = scalar(f.ty) {
-            (scalar_max(k), true)
+            match (k, b.max_value) {
+                ("Uint32" | "Uint64", Some(v)) => (varint_len(v), true),
+                _ => (scalar_max(k), true),
+            }
         } else if f.ty == TY_STRING || f.ty == TY_BYTES {
             let l = b.max_len? as u64;
             (varint_len(l) + l, false)
@@ -226,9 +229,14 @@ impl<'f> Gen<'f> {
                         Some(n) => format!("        if v.len() > {n} {{ return Err({rt}::EncodeError::TooMany {{ field: {num}, max: {n} }}); }}\n"),
                         None => String::new(),
                     };
+                    let value_guard = match (k, b.max_value) {
+                        ("Uint32" | "Uint64", Some(n)) => format!("        if v.iter().any(|&x| u64::from(x) > {n}) {{ return Err({rt}::EncodeError::TooLarge {{ field: {num}, max: {n} }}); }}\n"),
+                        _ => String::new(),
+                    };
                     let _ = writeln!(out, "{doc} Packed; once.\n    pub fn {}(&mut self, v: &[{ty}]) -> Result<&mut Self, {rt}::EncodeError> {{", ident(&name));
                     out.push_str(&once(bit));
                     out.push_str(&max);
+                    out.push_str(&value_guard);
                     let _ = writeln!(out, "        if v.is_empty() {{ return Ok(self); }}");
                     let _ = writeln!(out, "        self.w.message_try({num}, |w| {{ for &x in v {{ {} }} Ok::<(), {rt}::EncodeError>(()) }})?;", packed_elem(k));
                     let _ = writeln!(out, "        Ok(self)\n    }}");
@@ -268,8 +276,13 @@ impl<'f> Gen<'f> {
                 } else {
                     format!("        if v == {def} {{ return Ok(self); }}\n")
                 };
+                let value_guard = match (k, b.max_value) {
+                    ("Uint32" | "Uint64", Some(n)) => format!("        if u64::from(v) > {n} {{ return Err({rt}::EncodeError::TooLarge {{ field: {num}, max: {n} }}); }}\n"),
+                    _ => String::new(),
+                };
                 let _ = writeln!(out, "{doc}\n    pub fn {}(&mut self, v: {ty}) -> Result<&mut Self, {rt}::EncodeError> {{", ident(&name));
                 out.push_str(&once(bit));
+                out.push_str(&value_guard);
                 out.push_str(&skip);
                 let _ = writeln!(out, "        self.w.{}({num}, v)?;\n        Ok(self)\n    }}", writer_method(k));
             } else if f.ty == TY_STRING || f.ty == TY_BYTES {

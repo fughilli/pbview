@@ -106,9 +106,10 @@ let n = ManifestEnc::encode(&mut buf, |m| {
   `optional` fields and oneof arms are.
 - Limits the schema cannot say come from a sidecar file passed with `--bounds`
   (`pbview_library(bounds = ...)`): lines of `pkg.Message.field max_len N` and
-  `... max_count N`. The setters enforce them (`TooLong`, `TooMany`), and when every field of a
+  `... max_count N`, and (unsigned fields) `... max_value N`. The setters enforce them (`TooLong`,
+  `TooMany`, `TooLarge`), and when every field of a
   message is bounded it gets `FooEnc::MAX_ENCODED_LEN`, an exact worst case (every varint at full
-  width): `const _: () = assert!(FooEnc::MAX_ENCODED_LEN + 10 <= 125);` is a frame budget
+  width, or at its `max_value`): `const _: () = assert!(FooEnc::MAX_ENCODED_LEN + 10 <= 125);` is a frame budget
   checked at build time. Recursive or unbounded messages have no such constant.
 - Set fields in field-number order to get protoc's canonical output (the tests compare the
   builder's bytes with protoc's for every field kind).

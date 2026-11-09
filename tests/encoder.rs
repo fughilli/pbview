@@ -146,6 +146,16 @@ fn declared_limits_are_enforced() {
 }
 
 #[test]
+fn max_value_is_enforced() {
+    let mut buf = [0u8; 16];
+    let e = PacketEnc::encode(&mut buf, |m| {
+        m.id(65536)?;
+        Ok(())
+    });
+    assert_eq!(e, Err(EncodeError::TooLarge { field: 1, max: 65535 }));
+}
+
+#[test]
 fn buffer_full_is_an_error_not_a_truncation() {
     let mut buf = [0u8; 8];
     let e = PacketEnc::encode(&mut buf, |m| {
@@ -159,11 +169,11 @@ fn buffer_full_is_an_error_not_a_truncation() {
 
 #[test]
 fn max_encoded_len_is_tight() {
-    // 6 + 22 + 22 + 63 + 21 + 6 + 6 + 5, from testdata/bounds.txt (see the BUILD comment).
-    assert_eq!(PacketEnc::MAX_ENCODED_LEN, 151);
+    // 4 + 22 + 22 + 63 + 21 + 6 + 6 + 5, from testdata/bounds.txt.
+    assert_eq!(PacketEnc::MAX_ENCODED_LEN, 149); // id bounded to 65535: a 3-byte varint, not 5
     let mut buf = [0u8; 256];
     let n = PacketEnc::encode(&mut buf, |m| {
-        m.id(u32::MAX)?
+        m.id(65535)?
             .payload(&[0xaa; 20])?
             .hops(&[u32::MAX; 4])?;
         for _ in 0..3 {
@@ -179,7 +189,7 @@ fn max_encoded_len_is_tight() {
     assert_eq!(n, PacketEnc::MAX_ENCODED_LEN, "the worst case is reached, so the bound is exact");
     // And it round-trips through the views.
     let v = PacketView::parse(&buf[..n]).unwrap();
-    assert_eq!(v.id(), u32::MAX);
+    assert_eq!(v.id(), 65535);
     assert_eq!(v.tags().count(), 3);
     assert_eq!(v.hops().collect::<Vec<_>>(), [u32::MAX; 4]);
     let t: TagView = v.tag().unwrap();

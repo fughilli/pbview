@@ -41,7 +41,7 @@ pub struct Options {
 }
 
 /// Limits the schema cannot express, declared in a sidecar file (`--bounds`, lines of
-/// `pkg.Message.field max_len N` / `max_count N`). The typed encoders enforce them at run
+/// `pkg.Message.field max_len N` / `max_count N` / `max_value N`). The typed encoders enforce them at run
 /// time, and a message whose every field is bounded gets a compile-time `MAX_ENCODED_LEN`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Bound {
@@ -49,6 +49,9 @@ pub struct Bound {
     pub max_len: Option<usize>,
     /// Most elements of a repeated field.
     pub max_count: Option<usize>,
+    /// Largest value of a `uint32` / `uint64` field (each element, for repeated fields): the
+    /// encoder rejects larger ones and sizes the varint accordingly.
+    pub max_value: Option<u64>,
 }
 
 /// Parse a bounds file: `#` comments, blank lines, `field max_len N`, `field max_count N`.
@@ -63,11 +66,12 @@ pub fn parse_bounds(text: &str) -> Result<HashMap<String, Bound>, String> {
         if parts.len() != 3 {
             return Err(format!("bounds line {}: expected `field max_len|max_count N`", i + 1));
         }
-        let n: usize = parts[2].parse().map_err(|_| format!("bounds line {}: bad number", i + 1))?;
+        let n: u64 = parts[2].parse().map_err(|_| format!("bounds line {}: bad number", i + 1))?;
         let b = out.entry(parts[0].trim_start_matches('.').to_string()).or_default();
         match parts[1] {
-            "max_len" => b.max_len = Some(n),
-            "max_count" => b.max_count = Some(n),
+            "max_len" => b.max_len = Some(n as usize),
+            "max_count" => b.max_count = Some(n as usize),
+            "max_value" => b.max_value = Some(n),
             other => return Err(format!("bounds line {}: unknown limit `{other}`", i + 1)),
         }
     }

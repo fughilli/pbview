@@ -532,6 +532,8 @@ pub enum EncodeError {
     TooLong { field: u32, max: usize },
     /// More elements of a repeated field than its declared `max_count`.
     TooMany { field: u32, max: usize },
+    /// An unsigned integer above its declared `max_value`.
+    TooLarge { field: u32, max: u64 },
 }
 
 impl From<Full> for EncodeError {

@@ -4,3 +4,4 @@ pbview.test.Packet.hops max_count 4
 pbview.test.Packet.tags max_count 3
 pbview.test.Packet.text max_len 10
 pbview.test.Tag.name max_len 8
+pbview.test.Packet.id max_value 65535
