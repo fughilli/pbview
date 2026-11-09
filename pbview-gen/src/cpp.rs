@@ -22,11 +22,13 @@ use std::fmt::Write as _;
 pub struct CppOptions {
     /// The `#include` for the runtime header (default `pbview.h`).
     pub runtime_include: String,
+    /// Declared limits for the typed encoders (see `crate::Bound`).
+    pub bounds: HashMap<String, crate::Bound>,
 }
 
 impl Default for CppOptions {
     fn default() -> Self {
-        CppOptions { runtime_include: "pbview.h".into() }
+        CppOptions { runtime_include: "pbview.h".into(), bounds: HashMap::new() }
     }
 }
 
@@ -77,15 +79,19 @@ fn scalar(ty: u32) -> Option<(&'static str, &'static str, &'static str)> {
     })
 }
 
+mod enc;
+
 struct Gen<'f> {
     files: &'f [FileDesc],
     /// Full proto name (`.pkg.Outer.Inner`) -> absolute C++ name.
     types: HashMap<String, String>,
+    msgs: HashMap<String, &'f MessageDesc>,
+    bounds: HashMap<String, crate::Bound>,
 }
 
 pub fn generate(fdset: &[u8], opts: &CppOptions) -> Result<String, String> {
     let files = crate::descriptor::parse_set(fdset)?;
-    Gen { files: &files, types: HashMap::new() }.run(opts)
+    Gen { files: &files, types: HashMap::new(), msgs: HashMap::new(), bounds: opts.bounds.clone() }.run(opts)
 }
 
 fn ns_of(package: &str) -> Vec<String> {
@@ -107,8 +113,9 @@ impl<'f> Gen<'f> {
         }
     }
 
-    fn index_message(&mut self, prefix: &str, abs: &dyn Fn(&str) -> String, flat: &str, m: &MessageDesc) {
+    fn index_message(&mut self, prefix: &str, abs: &dyn Fn(&str) -> String, flat: &str, m: &'f MessageDesc) {
         let full = format!("{prefix}.{}", m.name);
+        self.msgs.insert(full.clone(), m);
         let flat_name = format!("{flat}{}", m.name);
         self.types.insert(full.clone(), abs(&ident(&format!("{flat_name}View"))));
         for e in &m.enums {
@@ -150,7 +157,8 @@ impl<'f> Gen<'f> {
                         }
                     }
                     for m in &f.messages {
-                        self.emit_message(&mut out, pass, "", m, f.proto3)?;
+                        let prefix = if f.package.is_empty() { String::new() } else { format!(".{}", f.package) };
+                        self.emit_message(&mut out, pass, &prefix, "", m, f.proto3)?;
                     }
                 }
                 for n in ns.iter().rev() {
@@ -188,7 +196,7 @@ impl<'f> Gen<'f> {
         ident(&n)
     }
 
-    fn has_presence(&self, f: &FieldDesc, proto3: bool) -> bool {
+    pub(self) fn has_presence(&self, f: &FieldDesc, proto3: bool) -> bool {
         f.ty == TY_MESSAGE || f.oneof_index.is_some() || f.proto3_optional || !proto3
     }
 
@@ -205,7 +213,8 @@ impl<'f> Gen<'f> {
         })
     }
 
-    fn emit_message(&self, out: &mut String, pass: u32, flat: &str, m: &MessageDesc, proto3: bool) -> Result<(), String> {
+    fn emit_message(&self, out: &mut String, pass: u32, prefix: &str, flat: &str, m: &MessageDesc, proto3: bool) -> Result<(), String> {
+        let full = format!("{prefix}.{}", m.name);
         let flat_name = format!("{flat}{}", m.name);
         let view = ident(&format!("{flat_name}View"));
         for f in &m.fields {
@@ -219,12 +228,19 @@ impl<'f> Gen<'f> {
                     self.emit_enum(out, &ident(&format!("{flat_name}_{}", e.name)), e);
                 }
                 let _ = writeln!(out, "class {view};");
+                let _ = writeln!(out, "class {};", ident(&format!("{flat_name}Enc")));
             }
-            1 => self.emit_class(out, &view, m, proto3)?,
-            _ => self.emit_defs(out, &view, m, proto3)?,
+            1 => {
+                self.emit_class(out, &view, m, proto3)?;
+                self.emit_enc_class(out, &ident(&format!("{flat_name}Enc")), m, &full, proto3)?;
+            }
+            _ => {
+                self.emit_defs(out, &view, m, proto3)?;
+                self.emit_enc_defs(out, &ident(&format!("{flat_name}Enc")), m, &full, proto3)?;
+            }
         }
         for n in &m.nested {
-            self.emit_message(out, pass, &format!("{flat_name}_"), n, proto3)?;
+            self.emit_message(out, pass, &full, &format!("{flat_name}_"), n, proto3)?;
         }
         Ok(())
     }

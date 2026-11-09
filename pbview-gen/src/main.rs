@@ -41,6 +41,7 @@ fn main() {
         "rust" => pbview_gen::generate(&fdset, &opts),
         "cpp" => {
             let mut c = pbview_gen::cpp::CppOptions::default();
+            c.bounds = opts.bounds.clone();
             if let Some(r) = &opts.runtime {
                 c.runtime_include = r.clone();
             }

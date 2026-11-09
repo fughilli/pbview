@@ -23,6 +23,7 @@
 pub mod cpp;
 pub mod descriptor;
 mod encoder;
+mod size;
 
 use descriptor::{FieldDesc, FileDesc, Label, MessageDesc};
 use std::collections::HashMap;

@@ -538,6 +538,18 @@ class Writer {
     return BytesField(f, Bytes(reinterpret_cast<const uint8_t*>(v.data()), v.size()));
   }
 
+  // An unframed little-endian value (a packed run's element).
+  bool RawFixed32(uint32_t v) {
+    uint8_t b[4];
+    for (int i = 0; i < 4; i++) b[i] = static_cast<uint8_t>(v >> (8 * i));
+    return Raw(b, 4);
+  }
+  bool RawFixed64(uint64_t v) {
+    uint8_t b[8];
+    for (int i = 0; i < 8; i++) b[i] = static_cast<uint8_t>(v >> (8 * i));
+    return Raw(b, 8);
+  }
+
   // Write nested message `field`; `body(Writer&)` encodes its fields in place and
   // returns false when the buffer is full. The length prefix is reserved as one
   // byte; a longer body is shifted right in the buffer (one memmove, no second
@@ -573,6 +585,75 @@ class Writer {
   uint8_t* buf_;
   size_t cap_;
   size_t pos_ = 0;
+};
+
+// --- typed encoders ----------------------------------------------------------
+//
+// The generated `FooEnc` classes (pbview-gen --lang cpp) derive from EncBase. Errors are sticky
+// (no exceptions): the first problem is recorded, later setters do nothing, and Encode()
+// reports it. See the README, "Typed encoders".
+
+enum class EncodeError : uint8_t {
+  kOk = 0,
+  kFull,           // the output buffer is too small
+  kDuplicate,      // a singular field set twice
+  kOneofConflict,  // two arms of one oneof
+  kTooLong,        // a string/bytes value above its declared max_len
+  kTooMany,        // more elements of a repeated field than its max_count
+  kTooLarge,       // an unsigned value above its declared max_value
+};
+
+struct EncodeResult {
+  size_t size = 0;  // encoded length when ok()
+  EncodeError error = EncodeError::kOk;
+  uint32_t field = 0;  // the field the error concerns (0: none / buffer)
+  constexpr bool ok() const { return error == EncodeError::kOk; }
+};
+
+template <size_t kCounts>
+class EncBase {
+ public:
+  EncodeError error() const { return err_; }
+  uint32_t error_field() const { return err_field_; }
+
+ protected:
+  explicit EncBase(Writer* w) : w_(w) {}
+
+  bool Live() const { return err_ == EncodeError::kOk; }
+  bool Fail(EncodeError e, uint32_t field) {
+    if (err_ == EncodeError::kOk) {
+      err_ = e;
+      err_field_ = field;
+    }
+    return false;
+  }
+  // Mark a once-only field; false (and an error) if it was set before or an error is pending.
+  bool Once(unsigned bit, uint32_t field, bool oneof) {
+    if (!Live()) return false;
+    uint64_t& word = seen_[bit >> 6];
+    uint64_t mask = uint64_t(1) << (bit & 63);
+    if (word & mask) return Fail(oneof ? EncodeError::kOneofConflict : EncodeError::kDuplicate, field);
+    word |= mask;
+    return true;
+  }
+  // Count one element of repeated field `slot`; false (and an error) past `max` (0: no limit).
+  bool Count(unsigned slot, uint32_t field, uint32_t max) {
+    if (!Live()) return false;
+    if (max && counts_[slot] >= max) return Fail(EncodeError::kTooMany, field);
+    counts_[slot]++;
+    return true;
+  }
+  void Wr(bool ok) {
+    if (!ok) Fail(EncodeError::kFull, 0);
+  }
+
+  Writer* w_;
+
+ private:
+  EncodeError err_ = EncodeError::kOk;
+  uint32_t err_field_ = 0;
+  uint64_t seen_[2] = {0, 0};
+  uint32_t counts_[kCounts ? kCounts : 1] = {};
 };
 
 }  // namespace pbv

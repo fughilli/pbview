@@ -19,8 +19,10 @@ rust_library(
     name = "pbview_gen_lib",
     srcs = [
         "pbview-gen/src/cpp.rs",
+        "pbview-gen/src/cpp/enc.rs",
         "pbview-gen/src/descriptor.rs",
         "pbview-gen/src/encoder.rs",
+        "pbview-gen/src/size.rs",
         "pbview-gen/src/lib.rs",
     ],
     crate_name = "pbview_gen",
@@ -108,6 +110,7 @@ cc_library(
 
 pbview_cc_library(
     name = "conformance_views_cc",
+    bounds = "testdata/bounds.txt",
     fdset = ":conformance_fdset",
     header = "conformance_views.h",
 )
@@ -115,6 +118,25 @@ pbview_cc_library(
 cc_test(
     name = "cpp_conformance_test",
     srcs = ["cpp/tests/conformance_test.cc"],
+    copts = [
+        "-std=c++17",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-fno-exceptions",
+        "-fno-rtti",
+    ],
+    data = [":conformance_golden"],
+    env = {"ALL_BIN": "$(rootpath :conformance_golden)"},
+    deps = [
+        ":conformance_views_cc",
+        ":pbview_cc",
+    ],
+)
+
+cc_test(
+    name = "cpp_encoder_test",
+    srcs = ["cpp/tests/encoder_test.cc"],
     copts = [
         "-std=c++17",
         "-Wall",

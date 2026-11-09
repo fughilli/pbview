@@ -114,6 +114,22 @@ let n = ManifestEnc::encode(&mut buf, |m| {
 - Set fields in field-number order to get protoc's canonical output (the tests compare the
   builder's bytes with protoc's for every field kind).
 
+### C++
+
+The same builders exist for C++ (`pbview_cc_library(bounds = ...)`, `--lang cpp --bounds FILE`).
+Errors are sticky instead of `Result`s, since the firmware builds without exceptions:
+
+```cpp
+auto r = ManifestEnc::Encode(buf, sizeof buf, [&](ManifestEnc& m) {
+  m.body(body_bytes).signature(sig);      // chainable; the first error is recorded, the rest no-op
+});
+if (!r.ok()) { /* r.error: kFull, kDuplicate, kOneofConflict, kTooLong, kTooMany, kTooLarge; r.field */ }
+use(buf, r.size);                         // and ManifestEnc::kMaxEncodedLen is a constexpr worst case
+```
+
+Same semantics as the Rust encoders: a repeated scalar is one packed `(const T*, size_t)` call, other
+repeated fields are `add_<name>`, nested messages take a callable over the sub-encoder.
+
 ## C++
 
 The same views for C++17 firmware: a header-only runtime (`cpp/pbview.h`, namespace `pbv`: no
@@ -150,6 +166,8 @@ names (a field with that name gets a trailing `_`). The Rust output's typed sing
 - `runtime_test`: varints, zigzag, every scalar kind, last-wins, packed/unpacked
   mixes, the writer's length backpatching across varint size boundaries, and
   20k random buffers through every reader.
+- `cpp_encoder_test`: the C++ typed encoders against protoc's bytes, the guardrails, and a tight
+  `kMaxEncodedLen` (mirrors `encoder_test`).
 - `cpp_conformance_test`: the same suite against the C++ output (built `-Werror
   -fno-exceptions -fno-rtti`), plus varint boundaries and `Writer` round trips through
   views.

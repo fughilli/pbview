@@ -19,6 +19,7 @@
 
 use super::{ident, scalar, snake, Gen, TY_BYTES, TY_MESSAGE, TY_STRING};
 use crate::descriptor::{FieldDesc, Label, MessageDesc};
+use crate::size::Sizer;
 use std::fmt::Write as _;
 
 /// Writer method and packed-element code for a scalar kind.
@@ -59,93 +60,13 @@ fn packed_elem(kind: &str) -> &'static str {
     }
 }
 
-/// Most bytes one scalar value takes on the wire (varints at full width).
-fn scalar_max(kind: &str) -> u64 {
-    match kind {
-        "Double" | "Fixed64" | "Sfixed64" => 8,
-        "Float" | "Fixed32" | "Sfixed32" => 4,
-        "Bool" => 1,
-        "Uint32" | "Sint32" => 5,
-        _ => 10, // int32/enum sign-extend to 10; int64, uint64, sint64
-    }
-}
-
-fn varint_len(mut v: u64) -> u64 {
-    let mut n = 1;
-    v >>= 7;
-    while v != 0 {
-        n += 1;
-        v >>= 7;
-    }
-    n
-}
-
-fn tag_len(number: u32) -> u64 {
-    varint_len(u64::from(number) << 3)
-}
-
 impl<'f> Gen<'f> {
+    fn sizer(&self) -> Sizer<'_, 'f> {
+        Sizer { msgs: &self.msgs, bounds: &self.opts.bounds, scalar }
+    }
+
     fn bound(&self, full: &str, f: &FieldDesc) -> crate::Bound {
-        let key = format!("{}.{}", full.trim_start_matches('.'), f.name);
-        self.opts.bounds.get(&key).copied().unwrap_or_default()
-    }
-
-    /// Worst-case encoded size of message `full`, if every field it can carry is bounded.
-    fn max_encoded(&self, full: &str, stack: &mut Vec<String>) -> Option<u64> {
-        if stack.iter().any(|s| s == full) {
-            return None; // recursive: unbounded
-        }
-        let m = *self.msgs.get(full)?;
-        stack.push(full.to_string());
-        let mut total = 0u64;
-        let mut oneof_max: Vec<u64> = vec![0; m.oneofs.len()];
-        let mut ok = true;
-        for f in &m.fields {
-            let size = self.field_max(full, f, stack);
-            let Some(size) = size else {
-                ok = false;
-                break;
-            };
-            match f.oneof_index {
-                Some(i) if !f.proto3_optional => {
-                    let slot = &mut oneof_max[i as usize];
-                    *slot = (*slot).max(size);
-                }
-                _ => total += size,
-            }
-        }
-        stack.pop();
-        ok.then(|| total + oneof_max.iter().sum::<u64>())
-    }
-
-    fn field_max(&self, full: &str, f: &FieldDesc, stack: &mut Vec<String>) -> Option<u64> {
-        let b = self.bound(full, f);
-        let tag = tag_len(f.number);
-        // One element, without its tag.
-        let (elem, packable): (u64, bool) = if let Some((k, _, _)) = scalar(f.ty) {
-            match (k, b.max_value) {
-                // A field that can only be 0 is never written (proto3 default).
-                ("Uint32" | "Uint64" | "Enum", Some(0)) if f.label != Label::Repeated && f.oneof_index.is_none() && !f.proto3_optional => return Some(0),
-                ("Uint32" | "Uint64" | "Enum", Some(v)) => (varint_len(v), true),
-                _ => (scalar_max(k), true),
-            }
-        } else if f.ty == TY_STRING || f.ty == TY_BYTES {
-            let l = b.max_len? as u64;
-            (varint_len(l) + l, false)
-        } else {
-            let sub = self.max_encoded(&f.type_name, stack)?;
-            (varint_len(sub) + sub, false)
-        };
-        if f.label != Label::Repeated {
-            return Some(tag + elem);
-        }
-        let n = b.max_count? as u64;
-        if packable {
-            let body = n * elem;
-            Some(if n == 0 { 0 } else { tag + varint_len(body) + body })
-        } else {
-            Some(n * (tag + elem))
-        }
+        self.sizer().bound(full, f)
     }
 
     pub(super) fn emit_encoder(
@@ -193,7 +114,7 @@ impl<'f> Gen<'f> {
         let _ = writeln!(out, "/// Typed encoder for `{}` (see `pbview_gen::encoder`).", m.name);
         let _ = writeln!(out, "pub struct {enc}<'a, 'b> {{ w: &'a mut {rt}::Writer<'b>, seen: u128, counts: [u32; {}] }}", counts.max(1));
         let _ = writeln!(out, "impl<'a, 'b> {enc}<'a, 'b> {{");
-        if let Some(n) = self.max_encoded(full, &mut Vec::new()) {
+        if let Some(n) = self.sizer().max_encoded(full, &mut Vec::new()) {
             let _ = writeln!(out, "    /// Worst-case encoded size: every field set, every varint at full width, every bounded value at its limit.\n    pub const MAX_ENCODED_LEN: usize = {n};");
         }
         let _ = writeln!(out, "    pub fn new(w: &'a mut {rt}::Writer<'b>) -> Self {{ {enc} {{ w, seen: 0, counts: [0; {}] }} }}", counts.max(1));

@@ -35,7 +35,7 @@ def pbview_library(name, fdset, crate_name = None, bounds = None, visibility = N
         **kwargs
     )
 
-def pbview_cc_library(name, fdset, header = None, visibility = None, **kwargs):
+def pbview_cc_library(name, fdset, header = None, bounds = None, visibility = None, **kwargs):
     """A C++17 header of pbview views for every file in `fdset`.
 
     The header includes "pbview.h" (@pbview//:pbview_cc is added as a dependency).
@@ -44,6 +44,7 @@ def pbview_cc_library(name, fdset, header = None, visibility = None, **kwargs):
       name: target name.
       fdset: label of a protoc `--descriptor_set_out` FileDescriptorSet.
       header: generated header name (default: name + ".h").
+      bounds: optional sidecar file of limits for the typed encoders (see pbview_library).
       visibility: visibility of the library.
       **kwargs: passed to cc_library.
     """
@@ -51,9 +52,10 @@ def pbview_cc_library(name, fdset, header = None, visibility = None, **kwargs):
     gen = name + "_gen"
     native.genrule(
         name = gen,
-        srcs = [fdset],
+        srcs = [fdset] + ([bounds] if bounds else []),
         outs = [header],
-        cmd = "$(execpath @pbview//:pbview_gen) $(location " + fdset + ") $@ --lang cpp",
+        cmd = "$(execpath @pbview//:pbview_gen) $(location " + fdset + ") $@ --lang cpp" +
+              ((" --bounds $(location " + bounds + ")") if bounds else ""),
         tools = ["@pbview//:pbview_gen"],
     )
     cc_library(
