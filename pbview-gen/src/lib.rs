@@ -20,6 +20,7 @@
 //! (stack proportional to the field count); hot paths that read most fields
 //! use the single-pass `fields()` iterator instead.
 
+pub mod cpp;
 pub mod descriptor;
 
 use descriptor::{FieldDesc, FileDesc, Label, MessageDesc};

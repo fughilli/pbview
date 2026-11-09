@@ -1,5 +1,6 @@
 """pbview_library: zero-copy protobuf views generated from a descriptor set."""
 
+load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_rust//rust:defs.bzl", "rust_library")
 
 def pbview_library(name, fdset, crate_name = None, visibility = None, **kwargs):
@@ -27,6 +28,35 @@ def pbview_library(name, fdset, crate_name = None, visibility = None, **kwargs):
         crate_name = crate_name,
         edition = "2021",
         deps = ["@pbview//:pbview"],
+        visibility = visibility,
+        **kwargs
+    )
+
+def pbview_cc_library(name, fdset, header = None, visibility = None, **kwargs):
+    """A C++17 header of pbview views for every file in `fdset`.
+
+    The header includes "pbview.h" (@pbview//:pbview_cc is added as a dependency).
+
+    Args:
+      name: target name.
+      fdset: label of a protoc `--descriptor_set_out` FileDescriptorSet.
+      header: generated header name (default: name + ".h").
+      visibility: visibility of the library.
+      **kwargs: passed to cc_library.
+    """
+    header = header or name + ".h"
+    gen = name + "_gen"
+    native.genrule(
+        name = gen,
+        srcs = [fdset],
+        outs = [header],
+        cmd = "$(execpath @pbview//:pbview_gen) $(location " + fdset + ") $@ --lang cpp",
+        tools = ["@pbview//:pbview_gen"],
+    )
+    cc_library(
+        name = name,
+        hdrs = [":" + gen],
+        deps = ["@pbview//:pbview_cc"],
         visibility = visibility,
         **kwargs
     )

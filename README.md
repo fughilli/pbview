@@ -86,11 +86,45 @@ Generated layout: package `a.b` becomes `mod a { mod b { … } }`; message `Foo`
 becomes `FooView<'a>`, with its nested types, oneof enums and `AnyField` in
 `mod foo`. Field accessors are `snake_case` (Rust keywords as raw identifiers).
 
+## C++
+
+The same views for C++17 firmware: a header-only runtime (`cpp/pbview.h`, namespace `pbv`: no
+exceptions, RTTI or heap; compiles with `-fno-exceptions -fno-rtti`) and the generator's
+`--lang cpp`:
+
+```starlark
+load("@pbview//:defs.bzl", "pbview_cc_library")
+
+pbview_cc_library(name = "my_views", fdset = ":my_proto_fdset")   # my_views.h
+```
+
+```cpp
+my::ClientMessageView msg;
+if (!my::ClientMessageView::Parse({rx, len}, &msg)) return;   // validates once
+if (msg.msg_case() == my::ClientMessageView::kFieldHello) {
+  auto name = msg.hello()->client();                          // std::string_view into rx
+}
+for (auto it = msg.leds(); it.Next(&led);) use(led.id());     // iterates the frame in place
+uint8_t out[128];
+pbv::Writer w(out, sizeof out);                               // in-place encoding
+w.Message(2, [&](pbv::Writer& m) { return m.Int32(1, 7) && m.String(2, "hi"); });
+```
+
+Package `a.b` becomes `namespace a { namespace b {`; message `Foo` is `FooView`, nested
+`Foo.Bar` is the flat `Foo_BarView`; enums are `enum class Foo_Color : int32_t` (fields read as
+raw `int32_t`: proto3 enums are open). A oneof `kind` gets `kind_case()`, the field number of
+the arm set last on the wire. `parse`, `validate`, `bytes` and `fields` are reserved accessor
+names (a field with that name gets a trailing `_`). The Rust output's typed single-pass
+`fields()` iterator is not generated for C++; `fields()` is the raw `pbv::Reader`.
+
 ## Tests
 
 - `runtime_test`: varints, zigzag, every scalar kind, last-wins, packed/unpacked
   mixes, the writer's length backpatching across varint size boundaries, and
   20k random buffers through every reader.
+- `cpp_conformance_test`: the same suite against the C++ output (built `-Werror
+  -fno-exceptions -fno-rtti`), plus varint boundaries and `Writer` round trips through
+  views.
 - `conformance_test`: views over **protoc's own encoding** of a message
   covering every field kind (all 15 scalar types, optional, repeated
   packed/unpacked, strings, bytes, nested and recursive messages, maps, a

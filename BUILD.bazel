@@ -1,7 +1,8 @@
 """pbview: zero-copy protobuf views (runtime + generator); see README.md."""
 
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
-load(":defs.bzl", "pbview_library")
+load(":defs.bzl", "pbview_cc_library", "pbview_library")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -17,6 +18,7 @@ rust_library(
 rust_library(
     name = "pbview_gen_lib",
     srcs = [
+        "pbview-gen/src/cpp.rs",
         "pbview-gen/src/descriptor.rs",
         "pbview-gen/src/lib.rs",
     ],
@@ -80,5 +82,37 @@ rust_test(
     deps = [
         ":conformance_views",
         ":pbview",
+    ],
+)
+
+# C++: the header-only runtime, and the same conformance suite against it.
+cc_library(
+    name = "pbview_cc",
+    hdrs = ["cpp/pbview.h"],
+    strip_include_prefix = "cpp",
+)
+
+pbview_cc_library(
+    name = "conformance_views_cc",
+    fdset = ":conformance_fdset",
+    header = "conformance_views.h",
+)
+
+cc_test(
+    name = "cpp_conformance_test",
+    srcs = ["cpp/tests/conformance_test.cc"],
+    copts = [
+        "-std=c++17",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-fno-exceptions",
+        "-fno-rtti",
+    ],
+    data = [":conformance_golden"],
+    env = {"ALL_BIN": "$(rootpath :conformance_golden)"},
+    deps = [
+        ":conformance_views_cc",
+        ":pbview_cc",
     ],
 )
