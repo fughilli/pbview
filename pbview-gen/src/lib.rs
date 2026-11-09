@@ -22,6 +22,7 @@
 
 pub mod cpp;
 pub mod descriptor;
+mod encoder;
 
 use descriptor::{FieldDesc, FileDesc, Label, MessageDesc};
 use std::collections::HashMap;
@@ -35,6 +36,42 @@ pub struct Options {
     pub crate_root: bool,
     /// Path the generated code uses to reach the runtime (default `::pbview`).
     pub runtime: Option<String>,
+    /// Declared limits, keyed by `pkg.Message.field` (see [`Bound`]).
+    pub bounds: HashMap<String, Bound>,
+}
+
+/// Limits the schema cannot express, declared in a sidecar file (`--bounds`, lines of
+/// `pkg.Message.field max_len N` / `max_count N`). The typed encoders enforce them at run
+/// time, and a message whose every field is bounded gets a compile-time `MAX_ENCODED_LEN`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Bound {
+    /// Longest string / bytes value (each element, for repeated fields).
+    pub max_len: Option<usize>,
+    /// Most elements of a repeated field.
+    pub max_count: Option<usize>,
+}
+
+/// Parse a bounds file: `#` comments, blank lines, `field max_len N`, `field max_count N`.
+pub fn parse_bounds(text: &str) -> Result<HashMap<String, Bound>, String> {
+    let mut out: HashMap<String, Bound> = HashMap::new();
+    for (i, line) in text.lines().enumerate() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() != 3 {
+            return Err(format!("bounds line {}: expected `field max_len|max_count N`", i + 1));
+        }
+        let n: usize = parts[2].parse().map_err(|_| format!("bounds line {}: bad number", i + 1))?;
+        let b = out.entry(parts[0].trim_start_matches('.').to_string()).or_default();
+        match parts[1] {
+            "max_len" => b.max_len = Some(n),
+            "max_count" => b.max_count = Some(n),
+            other => return Err(format!("bounds line {}: unknown limit `{other}`", i + 1)),
+        }
+    }
+    Ok(out)
 }
 
 /// Generate Rust for every file in the descriptor set.
@@ -117,6 +154,8 @@ struct Gen<'f> {
     rt: String,
     types: HashMap<String, TypeLoc>,
     enums: HashMap<String, ()>,
+    /// Full proto name (`.pkg.Outer.Inner`) -> descriptor, for encoder size bounds.
+    msgs: HashMap<String, &'f MessageDesc>,
 }
 
 /// The pbview scalar kind for a descriptor field type, with its Rust type and
@@ -154,6 +193,7 @@ impl<'f> Gen<'f> {
             rt: opts.runtime.clone().unwrap_or_else(|| "::pbview".into()),
             types: HashMap::new(),
             enums: HashMap::new(),
+            msgs: HashMap::new(),
         };
         for f in files {
             let pkg: Vec<String> =
@@ -171,8 +211,9 @@ impl<'f> Gen<'f> {
         g
     }
 
-    fn index_message(&mut self, prefix: &str, module: &[String], m: &MessageDesc) {
+    fn index_message(&mut self, prefix: &str, module: &[String], m: &'f MessageDesc) {
         let full = format!("{prefix}.{}", m.name);
+        self.msgs.insert(full.clone(), m);
         self.types.insert(
             full.clone(),
             TypeLoc { module: module.to_vec(), ident: format!("{}View", m.name) },
@@ -231,7 +272,8 @@ impl<'f> Gen<'f> {
                     self.emit_enum(&mut out, e);
                 }
                 for m in &f.messages {
-                    self.emit_message(&mut out, &parts, m, f.proto3)?;
+                    let prefix = if f.package.is_empty() { String::new() } else { format!(".{}", f.package) };
+                    self.emit_message(&mut out, &prefix, &parts, m, f.proto3)?;
                 }
             }
             for _ in &parts {
@@ -289,11 +331,13 @@ impl<'f> Gen<'f> {
     fn emit_message(
         &self,
         out: &mut String,
+        prefix: &str,
         module: &[String],
         m: &MessageDesc,
         proto3: bool,
     ) -> Result<(), String> {
         let rt = &self.rt;
+        let full = format!("{prefix}.{}", m.name);
         let view = format!("{}View", m.name);
         let modname = ident(&snake(&m.name));
         let mut inner_mod = module.to_vec();
@@ -431,6 +475,8 @@ impl<'f> Gen<'f> {
         let _ = writeln!(out, "    fn from_bytes_unchecked(buf: &'a [u8]) -> Self {{ {view} {{ buf }} }}");
         let _ = writeln!(out, "    fn as_bytes(&self) -> &'a [u8] {{ self.buf }}\n}}");
 
+        self.emit_encoder(out, module, m, &full, proto3)?;
+
         // Nested module: oneof enums, the field enum, nested types.
         let _ = writeln!(out, "pub mod {modname} {{");
         for (i, oname) in m.oneofs.iter().enumerate() {
@@ -485,7 +531,7 @@ impl<'f> Gen<'f> {
             self.emit_enum(out, e);
         }
         for n in &m.nested {
-            self.emit_message(out, &inner_mod, n, proto3)?;
+            self.emit_message(out, &full, &inner_mod, n, proto3)?;
         }
         let _ = writeln!(out, "}}");
         Ok(())

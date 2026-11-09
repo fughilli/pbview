@@ -1,0 +1,6 @@
+# Limits the typed encoders enforce and MAX_ENCODED_LEN sums (see pbview-gen --bounds).
+pbview.test.Packet.payload max_len 20
+pbview.test.Packet.hops max_count 4
+pbview.test.Packet.tags max_count 3
+pbview.test.Packet.text max_len 10
+pbview.test.Tag.name max_len 8

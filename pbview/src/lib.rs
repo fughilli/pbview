@@ -517,6 +517,29 @@ pub fn str_of(b: &[u8]) -> &str {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Full;
 
+/// Why generated typed encoders (`FooEnc`) refuse a call: the buffer is full, or the call
+/// would make the message ill-formed or break a declared limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EncodeError {
+    /// The output buffer is too small.
+    Full,
+    /// A singular field was set twice (protobuf would take the last; a packer should not
+    /// send both).
+    Duplicate { field: u32 },
+    /// Two arms of one oneof were set.
+    OneofConflict { field: u32 },
+    /// A string/bytes value longer than its declared `max_len`.
+    TooLong { field: u32, max: usize },
+    /// More elements of a repeated field than its declared `max_count`.
+    TooMany { field: u32, max: usize },
+}
+
+impl From<Full> for EncodeError {
+    fn from(_: Full) -> EncodeError {
+        EncodeError::Full
+    }
+}
+
 /// Bytes `v` takes as a varint.
 pub const fn varint_len(v: u64) -> usize {
     let mut n = 1;
@@ -613,6 +636,16 @@ impl<'b> Writer<'b> {
     pub fn double(&mut self, field: u32, v: f64) -> core::result::Result<(), Full> {
         self.fixed64(field, v.to_bits())
     }
+    pub fn sfixed32(&mut self, field: u32, v: i32) -> core::result::Result<(), Full> {
+        self.fixed32(field, v as u32)
+    }
+    pub fn sfixed64(&mut self, field: u32, v: i64) -> core::result::Result<(), Full> {
+        self.fixed64(field, v as u64)
+    }
+    /// An enum field's raw value.
+    pub fn enum_(&mut self, field: u32, v: i32) -> core::result::Result<(), Full> {
+        self.int32(field, v)
+    }
     pub fn bytes(&mut self, field: u32, v: &[u8]) -> core::result::Result<(), Full> {
         self.tag(field, WireType::Len)?;
         self.varint(v.len() as u64)?;
@@ -631,6 +664,16 @@ impl<'b> Writer<'b> {
         field: u32,
         body: impl FnOnce(&mut Writer<'_>) -> core::result::Result<(), Full>,
     ) -> core::result::Result<(), Full> {
+        self.message_try(field, body)
+    }
+
+    /// Like [`Writer::message`], for a body that can fail with its own error type (the
+    /// generated typed encoders use [`EncodeError`]).
+    pub fn message_try<E: From<Full>>(
+        &mut self,
+        field: u32,
+        body: impl FnOnce(&mut Writer<'_>) -> core::result::Result<(), E>,
+    ) -> core::result::Result<(), E> {
         self.tag(field, WireType::Len)?;
         let len_at = self.pos;
         self.raw(&[0])?;
@@ -646,7 +689,7 @@ impl<'b> Writer<'b> {
             let extra = need - 1;
             let end = self.pos.checked_add(extra).ok_or(Full)?;
             if end > self.buf.len() {
-                return Err(Full);
+                return Err(Full.into());
             }
             self.buf.copy_within(start..self.pos, start + extra);
             self.pos = end;

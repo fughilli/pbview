@@ -20,6 +20,7 @@ rust_library(
     srcs = [
         "pbview-gen/src/cpp.rs",
         "pbview-gen/src/descriptor.rs",
+        "pbview-gen/src/encoder.rs",
         "pbview-gen/src/lib.rs",
     ],
     crate_name = "pbview_gen",
@@ -70,7 +71,20 @@ genrule(
 
 pbview_library(
     name = "conformance_views",
+    bounds = "testdata/bounds.txt",
     fdset = ":conformance_fdset",
+)
+
+rust_test(
+    name = "encoder_test",
+    srcs = ["tests/encoder.rs"],
+    data = [":conformance_golden"],
+    edition = "2021",
+    env = {"ALL_BIN": "$(rootpath :conformance_golden)"},
+    deps = [
+        ":conformance_views",
+        ":pbview",
+    ],
 )
 
 rust_test(

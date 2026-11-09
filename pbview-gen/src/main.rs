@@ -1,4 +1,4 @@
-//! `pbview-gen <descriptor_set.bin> <out> [--crate-root] [--runtime PATH] [--lang rust|cpp]`
+//! `pbview-gen <descriptor_set.bin> <out> [--crate-root] [--runtime PATH] [--lang rust|cpp] [--bounds FILE]`
 //!
 //! Reads a protoc `--descriptor_set_out` FileDescriptorSet and writes the
 //! zero-copy view module (Rust, default) or header (`--lang cpp`; `--runtime`
@@ -15,11 +15,22 @@ fn main() {
             "--crate-root" => opts.crate_root = true,
             "--runtime" => opts.runtime = it.next().cloned(),
             "--lang" => lang = it.next().cloned().unwrap_or_default(),
+            "--bounds" => {
+                let path = it.next().cloned().unwrap_or_default();
+                let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+                    eprintln!("pbview-gen: read {path}: {e}");
+                    std::process::exit(1)
+                });
+                opts.bounds = pbview_gen::parse_bounds(&text).unwrap_or_else(|e| {
+                    eprintln!("pbview-gen: {path}: {e}");
+                    std::process::exit(1)
+                });
+            }
             _ => pos.push(a.clone()),
         }
     }
     if pos.len() != 2 {
-        eprintln!("usage: pbview-gen <descriptor_set.bin> <out.rs> [--crate-root] [--runtime PATH] [--lang rust|cpp]");
+        eprintln!("usage: pbview-gen <descriptor_set.bin> <out.rs> [--crate-root] [--runtime PATH] [--lang rust|cpp] [--bounds FILE]");
         std::process::exit(2);
     }
     let fdset = std::fs::read(&pos[0]).unwrap_or_else(|e| {

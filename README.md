@@ -86,6 +86,33 @@ Generated layout: package `a.b` becomes `mod a { mod b { … } }`; message `Foo`
 becomes `FooView<'a>`, with its nested types, oneof enums and `AnyField` in
 `mod foo`. Field accessors are `snake_case` (Rust keywords as raw identifiers).
 
+## Typed encoders (Rust)
+
+`Writer` is untyped: nothing stops a wrong field number, a doubled field or an oversized
+value. The generator also emits a typed encoder per message, `FooEnc`:
+
+```rust
+let n = ManifestEnc::encode(&mut buf, |m| {
+    m.body(&body_bytes)?.signature(&sig)?;     // one setter per field, with the schema's types
+    Ok(())
+})?;                                           // Result<usize, EncodeError>
+```
+
+- Setters exist for exactly the schema's fields; a nested message is a closure over its own
+  encoder (`m.inner(|i| { i.a(3)?; Ok(()) })`, length backpatched in place); a repeated scalar
+  is one packed slice, other repeated fields are `add_<name>`, one element per call.
+- A singular field set twice is `EncodeError::Duplicate`, two arms of a oneof
+  `OneofConflict`, a full buffer `Full`. proto3 defaults are not written (as protoc does);
+  `optional` fields and oneof arms are.
+- Limits the schema cannot say come from a sidecar file passed with `--bounds`
+  (`pbview_library(bounds = ...)`): lines of `pkg.Message.field max_len N` and
+  `... max_count N`. The setters enforce them (`TooLong`, `TooMany`), and when every field of a
+  message is bounded it gets `FooEnc::MAX_ENCODED_LEN`, an exact worst case (every varint at full
+  width): `const _: () = assert!(FooEnc::MAX_ENCODED_LEN + 10 <= 125);` is a frame budget
+  checked at build time. Recursive or unbounded messages have no such constant.
+- Set fields in field-number order to get protoc's canonical output (the tests compare the
+  builder's bytes with protoc's for every field kind).
+
 ## C++
 
 The same views for C++17 firmware: a header-only runtime (`cpp/pbview.h`, namespace `pbv`: no
@@ -125,6 +152,8 @@ names (a field with that name gets a trailing `_`). The Rust output's typed sing
 - `cpp_conformance_test`: the same suite against the C++ output (built `-Werror
   -fno-exceptions -fno-rtti`), plus varint boundaries and `Writer` round trips through
   views.
+- `encoder_test`: the typed encoders against protoc's bytes, the guardrails, and a tight
+  `MAX_ENCODED_LEN`.
 - `conformance_test`: views over **protoc's own encoding** of a message
   covering every field kind (all 15 scalar types, optional, repeated
   packed/unpacked, strings, bytes, nested and recursive messages, maps, a

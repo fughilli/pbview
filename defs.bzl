@@ -3,22 +3,25 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_rust//rust:defs.bzl", "rust_library")
 
-def pbview_library(name, fdset, crate_name = None, visibility = None, **kwargs):
+def pbview_library(name, fdset, crate_name = None, bounds = None, visibility = None, **kwargs):
     """A no_std Rust crate of pbview views for every file in `fdset`.
 
     Args:
       name: target name.
       fdset: label of a protoc `--descriptor_set_out` FileDescriptorSet.
       crate_name: crate name (default: `name`).
+      bounds: optional sidecar file of limits (`pkg.Message.field max_len N` / `max_count N`)
+        enforced by the typed encoders and summed into `FooEnc::MAX_ENCODED_LEN`.
       visibility: visibility of the library.
       **kwargs: passed to rust_library.
     """
     gen = name + "_gen"
     native.genrule(
         name = gen,
-        srcs = [fdset],
+        srcs = [fdset] + ([bounds] if bounds else []),
         outs = [name + ".rs"],
-        cmd = "$(execpath @pbview//:pbview_gen) $(location " + fdset + ") $@ --crate-root",
+        cmd = "$(execpath @pbview//:pbview_gen) $(location " + fdset + ") $@ --crate-root" +
+              ((" --bounds $(location " + bounds + ")") if bounds else ""),
         tools = ["@pbview//:pbview_gen"],
     )
     rust_library(
